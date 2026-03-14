@@ -21,3 +21,11 @@ type GeofencePoint struct {
 	Longitude float64
 	Radius    float64 // in meters
 }
+
+// GeofenceEvent represents the event published to RabbitMQ
+type GeofenceEvent struct {
+	VehicleID string   `json:"vehicle_id"`
+	Event     string   `json:"event"`
+	Location  Location `json:"location"`
+	Timestamp int64    `json:"timestamp"`
+}
