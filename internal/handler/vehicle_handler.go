@@ -40,7 +40,7 @@ func (h *VehicleHandler) GetLastLocation(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, dto.LocationResponse{
+	dto.SendSuccess(c, dto.LocationResponse{
 		VehicleID: loc.VehicleID,
 		Latitude:  loc.Latitude,
 		Longitude: loc.Longitude,
