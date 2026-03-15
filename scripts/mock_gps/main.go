@@ -28,18 +28,19 @@ func main() {
 	halteLng := 106.8456
 
 	// Bus route simulation: from point A passing through bus stop to point B
-	// Point A: ~600m before bus stop (west)
-	// Point B: ~600m after bus stop (east)
-	startLat := halteLat - 0.001
-	startLng := halteLng - 0.005
-	endLat := halteLat + 0.001
-	endLng := halteLng + 0.005
+	// Point A: ~500m before bus stop
+	// Point B: ~500m after bus stop
+	startLat := halteLat - 0.0045
+	startLng := halteLng - 0.0045
+	endLat := halteLat + 0.0045
+	endLng := halteLng + 0.0045
 
-	// Total ticks in one travel cycle A -> B
-	// 90 ticks = 180 seconds per cycle
-	// Distance per tick: ~600m / 90 ticks approx 6.7m per tick
-	// Bus within 50m radius approx 100m / 6.7m approx ~15 ticks (~30 seconds)
-	const totalTicks = 90
+	// Speed in degrees per tick
+	const (
+		normalStep = 0.00027 // ~30m per tick (normal speed)
+		slowStep   = 0.00005 // ~5m per tick  (slow speed approaching bus stop)
+		slowRadius = 150.0   // start slowing down at 150m radius from bus stop
+	)
 
 	opts := pahomqtt.NewClientOptions()
 	opts.AddBroker(broker)
@@ -63,30 +64,83 @@ func main() {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	i := 0
+	// Initial bus position at point A
+	currentLat := startLat
+	currentLng := startLng
+	direction := 1.0
+
+	const stopTicks = 3
+	stopCounter := 0
+	isStopped := false
+	hasStoppedThisPass := false // prevent repeated stops in one pass
+
 	for range ticker.C {
-		// Travel progress: 0.0 (point A) -> 1.0 (point B)
-		progress := float64(i%totalTicks) / float64(totalTicks)
+		dist := haversineDistance(currentLat, currentLng, halteLat, halteLng)
 
-		// Linear interpolation from A to B (bus moves gradually)
-		lat := startLat + (endLat-startLat)*progress
-		lng := startLng + (endLng-startLng)*progress
+		// Trigger stop only once per pass, when first entering 20m radius
+		if !isStopped && !hasStoppedThisPass && dist <= 20 {
+			isStopped = true
+			stopCounter = stopTicks
+			log.Printf("--- Bus stopping at bus stop (%.0fm from center) ---", dist)
+		}
 
-		// Add small noise so it's not too straight (~5m)
-		lat += (rand.Float64()*0.0001 - 0.00005)
-		lng += (rand.Float64()*0.0001 - 0.00005)
+		if isStopped {
+			stopCounter--
+			if stopCounter <= 0 {
+				isStopped = false
+				hasStoppedThisPass = true
+				log.Println("--- Bus departing from bus stop ---")
+			}
+		} else {
+			step := normalStep
+			if dist <= slowRadius {
+				ratio := dist / slowRadius
+				step = slowStep + (normalStep-slowStep)*ratio
+			}
 
-		// Calculate distance to bus stop for log label
-		dist := haversineDistance(lat, lng, halteLat, halteLng)
+			currentLat += direction * step
+			currentLng += direction * step
+
+			// Small noise ~2m
+			currentLat += rand.Float64()*0.00004 - 0.00002
+			currentLng += rand.Float64()*0.00004 - 0.00002
+
+			// Reverse direction + reset flag when reaching route end
+			if currentLng >= endLng {
+				currentLat = endLat
+				currentLng = endLng
+				direction = -1.0
+				hasStoppedThisPass = false
+				log.Println("--- Bus reached point B, turning around ---")
+			} else if currentLng <= startLng {
+				currentLat = startLat
+				currentLng = startLng
+				direction = 1.0
+				hasStoppedThisPass = false
+				log.Println("--- Bus returned to point A, moving forward again ---")
+			}
+		}
+
+		dist = haversineDistance(currentLat, currentLng, halteLat, halteLng)
 		status := "outside geofence "
 		if dist <= 50 {
 			status = "INSIDE geofence"
 		}
 
+		speedKmh := 0.0
+		if !isStopped {
+			step := normalStep
+			if dist <= slowRadius {
+				ratio := dist / slowRadius
+				step = slowStep + (normalStep-slowStep)*ratio
+			}
+			speedKmh = step * 111000 / 2 * 3.6
+		}
+
 		payload := LocationPayload{
 			VehicleID: vehicleID,
-			Latitude:  lat,
-			Longitude: lng,
+			Latitude:  currentLat,
+			Longitude: currentLng,
 			Timestamp: time.Now().Unix(),
 		}
 
@@ -103,9 +157,8 @@ func main() {
 			continue
 		}
 
-		log.Printf("[tick %d | %s | %.0fm dari halte] vehicle=%s lat=%.6f lng=%.6f",
-			i+1, status, dist, vehicleID, lat, lng)
-		i++
+		log.Printf("[%s | %.0fm from bus stop | %.1f km/h] lat=%.6f lng=%.6f",
+			status, dist, speedKmh, currentLat, currentLng)
 	}
 }
 
