@@ -13,6 +13,7 @@ import (
 )
 
 type VehicleUsecase interface {
+	ProcessLocation(ctx context.Context, loc domain.VehicleLocation) error
 	GetLastLocation(ctx context.Context, vehicleID string) (*domain.VehicleLocation, error)
 	GetHistory(ctx context.Context, vehicleID string, start, end int64) ([]domain.VehicleLocation, error)
 }
